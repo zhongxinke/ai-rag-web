@@ -149,14 +149,16 @@ export interface ChatReference {
   contentPreview?: string
 }
 
+export interface ChatUsage {
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+}
+
 export interface ChatResponse {
   answer: string
   references: ChatReference[]
-  usage?: {
-    promptTokens?: number
-    completionTokens?: number
-    totalTokens?: number
-  }
+  usage?: ChatUsage
   sessionId?: string | null
   messageId?: string | null
 }
@@ -181,12 +183,16 @@ export interface ListChatSessionsParams extends PageRequest {
   knowledgeBaseId?: string | ''
 }
 
+export interface ListChatMessagesParams extends PageRequest {}
+
 export interface ChatMessage {
   id: string
   sessionId: string
   role: ChatMessageRole
   content: string
   references: ChatReference[]
+  usage?: ChatUsage | null
+  finishReason?: string | null
   createdAt: string
 }
 
@@ -207,6 +213,7 @@ export type ChatStreamEvent =
   | {
       type: 'done'
       finishReason?: string
+      usage?: ChatUsage
     }
   | {
       type: 'error'

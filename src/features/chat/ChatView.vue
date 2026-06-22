@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
 import { ExternalLink, Plus, RefreshCw, RotateCcw, Search, SendHorizontal, Square } from 'lucide-vue-next'
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { chatApi } from '@/api/chatApi'
 import { knowledgeBaseApi } from '@/api/knowledgeBaseApi'
-import type { ChatMessage, ChatReference, ChatResponse, ChatSession, KnowledgeBase } from '@/api/types'
+import type { ChatMessage, ChatReference, ChatSession, ChatUsage, KnowledgeBase } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -17,7 +17,6 @@ import { formatDateTime, truncateText } from '@/utils/format'
 type MessageView = ChatMessage & {
   pending?: boolean
   error?: boolean
-  usage?: ChatResponse['usage']
 }
 
 const route = useRoute()
@@ -159,6 +158,11 @@ async function loadSessionAndMessages(sessionId: string) {
 }
 
 async function refreshPage() {
+  if (streaming.value) {
+    ElMessage.warning('请先结束当前流式输出。')
+    return
+  }
+
   await loadKnowledgeBases()
 
   if (routeSessionId.value) {
@@ -254,6 +258,7 @@ async function ask() {
   const assistantMessage = reactive(createLocalMessage('ASSISTANT', '')) as MessageView
   let responseSessionId = requestSessionId
   let eventError = ''
+  let streamDone = false
 
   abortController.value = controller
   streaming.value = true
@@ -277,6 +282,10 @@ async function ask() {
           if (event.type === 'metadata') {
             responseSessionId = event.sessionId || responseSessionId
             assistantMessage.id = event.messageId || assistantMessage.id
+            if (responseSessionId) {
+              userMessage.sessionId = responseSessionId
+              assistantMessage.sessionId = responseSessionId
+            }
           }
 
           if (event.type === 'delta') {
@@ -288,14 +297,27 @@ async function ask() {
             assistantMessage.references = event.references
           }
 
+          if (event.type === 'done') {
+            streamDone = true
+            assistantMessage.pending = false
+            assistantMessage.finishReason = event.finishReason || null
+            assistantMessage.usage = event.usage || null
+          }
+
           if (event.type === 'error') {
             eventError = event.message
             assistantMessage.error = true
+            assistantMessage.pending = false
             assistantMessage.content ||= event.message
           }
         },
       },
     )
+
+    assistantMessage.pending = false
+    if (!streamDone) {
+      assistantMessage.finishReason ||= 'completed'
+    }
 
     if (eventError) {
       throw new Error(eventError)
@@ -316,20 +338,31 @@ async function ask() {
     await loadSessions()
   } catch (error) {
     assistantMessage.error = true
+    assistantMessage.pending = false
 
     if (isAbortError(error)) {
       assistantMessage.content ||= '已中断流式输出。'
+      assistantMessage.finishReason = 'aborted'
       streamError.value = '已中断流式输出。'
+      finalizeTransientMessages()
+      if (responseSessionId) {
+        await reconcileKnownSession(responseSessionId)
+      }
       ElMessage.info(streamError.value)
       return
     }
 
     streamError.value = resolveErrorMessage(error)
     assistantMessage.content ||= streamError.value
+    finalizeTransientMessages()
+    if (responseSessionId) {
+      await reconcileKnownSession(responseSessionId)
+    }
     ElMessage.error(streamError.value)
   } finally {
     streaming.value = false
     abortController.value = null
+    await scrollToBottom()
   }
 }
 
@@ -341,7 +374,39 @@ function createLocalMessage(role: ChatMessage['role'], content: string): Message
     content,
     references: [],
     createdAt: new Date().toISOString(),
-    pending: true,
+    pending: role === 'ASSISTANT',
+  }
+}
+
+function finalizeTransientMessages() {
+  if (transientMessages.value.length === 0) {
+    return
+  }
+
+  messages.value = [
+    ...messages.value,
+    ...transientMessages.value.map((message) => ({
+      ...message,
+      pending: false,
+    })),
+  ]
+  transientMessages.value = []
+}
+
+async function reconcileKnownSession(sessionId: string) {
+  await loadSessions()
+
+  const session = sessions.value.find((item) => item.id === sessionId)
+  if (!session) {
+    return
+  }
+
+  currentSession.value = session
+  form.knowledgeBaseId = session.knowledgeBaseId
+  appStore.rememberKnowledgeBase(session.knowledgeBaseId)
+
+  if (routeSessionId.value !== session.id) {
+    await router.replace(sessionPath(session))
   }
 }
 
@@ -375,6 +440,16 @@ function messageRoleLabel(role: ChatMessage['role']) {
   return '系统'
 }
 
+function messageStatusLabel(message: MessageView) {
+  if (message.error) {
+    return '失败'
+  }
+  if (message.pending) {
+    return '处理中'
+  }
+  return formatDateTime(message.createdAt)
+}
+
 function referenceTitle(reference: ChatReference) {
   return reference.fileName?.trim() || `文档 ${shortId(reference.documentId)}`
 }
@@ -397,6 +472,42 @@ function scoreTagType(score?: number) {
     return 'warning'
   }
   return 'info'
+}
+
+function usageItems(usage?: ChatUsage | null) {
+  if (!usage) {
+    return []
+  }
+
+  const items: string[] = []
+  if (typeof usage.promptTokens === 'number') {
+    items.push(`Prompt ${usage.promptTokens}`)
+  }
+  if (typeof usage.completionTokens === 'number') {
+    items.push(`Completion ${usage.completionTokens}`)
+  }
+  if (typeof usage.totalTokens === 'number') {
+    items.push(`Total ${usage.totalTokens}`)
+  }
+  return items
+}
+
+function finishReasonLabel(reason?: string | null) {
+  if (!reason) {
+    return ''
+  }
+
+  const normalized = reason.toLowerCase()
+  if (normalized === 'stop' || normalized === 'done' || normalized === 'completed') {
+    return '已完成'
+  }
+  if (normalized === 'length') {
+    return '达到长度限制'
+  }
+  if (normalized === 'aborted') {
+    return '已中断'
+  }
+  return `结束：${reason}`
 }
 
 function goToReference(reference: ChatReference) {
@@ -422,12 +533,12 @@ watch(
       return
     }
 
-    if (sessionId) {
-      await loadSessionAndMessages(sessionId)
+    if (streaming.value) {
       return
     }
 
-    if (streaming.value) {
+    if (sessionId) {
+      await loadSessionAndMessages(sessionId)
       return
     }
 
@@ -448,6 +559,10 @@ watch(
 onMounted(async () => {
   await refreshPage()
   initialized.value = true
+})
+
+onUnmounted(() => {
+  abortController.value?.abort()
 })
 </script>
 
@@ -492,6 +607,7 @@ onMounted(async () => {
                 filterable
                 :loading="loadingKnowledgeBases"
                 placeholder="选择知识库"
+                :disabled="streaming"
                 @change="handleKnowledgeBaseChange"
               >
                 <el-option v-for="item in knowledgeBases" :key="item.id" :label="item.name" :value="item.id">
@@ -560,11 +676,19 @@ onMounted(async () => {
               >
                 <div class="message-item__header">
                   <span>{{ messageRoleLabel(message.role) }}</span>
-                  <small>{{ message.pending ? '处理中' : formatDateTime(message.createdAt) }}</small>
+                  <small>{{ messageStatusLabel(message) }}</small>
                 </div>
 
                 <div class="message-content">
                   {{ message.content || (message.role === 'ASSISTANT' && streaming ? '正在生成回答...' : '无内容。') }}
+                </div>
+
+                <div
+                  v-if="message.role === 'ASSISTANT' && (usageItems(message.usage).length > 0 || finishReasonLabel(message.finishReason))"
+                  class="message-usage"
+                >
+                  <span v-for="item in usageItems(message.usage)" :key="item">{{ item }}</span>
+                  <span v-if="finishReasonLabel(message.finishReason)">{{ finishReasonLabel(message.finishReason) }}</span>
                 </div>
 
                 <div v-if="message.role === 'ASSISTANT' && message.references.length > 0" class="reference-list">
@@ -809,6 +933,21 @@ onMounted(async () => {
   line-height: 1.8;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.message-usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.message-usage span {
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-muted);
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 3px 8px;
 }
 
 .reference-list {

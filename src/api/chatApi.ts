@@ -6,7 +6,9 @@ import type {
   ChatResponse,
   ChatSession,
   ChatStreamEvent,
+  ChatUsage,
   CreateChatSessionRequest,
+  ListChatMessagesParams,
   ListChatSessionsParams,
   PageResponse,
 } from '@/api/types'
@@ -43,10 +45,39 @@ function isApiResponse(value: unknown): value is ApiResponse<unknown> {
   )
 }
 
-function toStreamEvent(raw: RawSseEvent): ChatStreamEvent | null {
-  const parsed = raw.data ? (JSON.parse(raw.data) as Record<string, unknown>) : {}
+function parseJsonObject(value: string): Record<string, unknown> {
+  if (!value || value === '[DONE]') {
+    return {}
+  }
 
-  if (raw.event === 'metadata') {
+  const parsed = JSON.parse(value) as unknown
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+}
+
+function toUsage(value: unknown): ChatUsage | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  const usage = value as Record<string, unknown>
+  return {
+    promptTokens: typeof usage.promptTokens === 'number' ? usage.promptTokens : undefined,
+    completionTokens: typeof usage.completionTokens === 'number' ? usage.completionTokens : undefined,
+    totalTokens: typeof usage.totalTokens === 'number' ? usage.totalTokens : undefined,
+  }
+}
+
+function toStreamEvent(raw: RawSseEvent): ChatStreamEvent | null {
+  const parsed = parseJsonObject(raw.data)
+  const eventType = raw.event === 'message' && typeof parsed.type === 'string' ? parsed.type : raw.event
+
+  if (raw.data === '[DONE]') {
+    return {
+      type: 'done',
+    }
+  }
+
+  if (eventType === 'metadata') {
     return {
       type: 'metadata',
       sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : undefined,
@@ -54,28 +85,29 @@ function toStreamEvent(raw: RawSseEvent): ChatStreamEvent | null {
     }
   }
 
-  if (raw.event === 'delta') {
+  if (eventType === 'delta') {
     return {
       type: 'delta',
       content: typeof parsed.content === 'string' ? parsed.content : '',
     }
   }
 
-  if (raw.event === 'references') {
+  if (eventType === 'references') {
     return {
       type: 'references',
       references: Array.isArray(parsed.references) ? (parsed.references as ChatResponse['references']) : [],
     }
   }
 
-  if (raw.event === 'done') {
+  if (eventType === 'done') {
     return {
       type: 'done',
       finishReason: typeof parsed.finishReason === 'string' ? parsed.finishReason : undefined,
+      usage: toUsage(parsed.usage),
     }
   }
 
-  if (raw.event === 'error') {
+  if (eventType === 'error') {
     return {
       type: 'error',
       message: typeof parsed.message === 'string' ? parsed.message : 'Streaming chat failed',
@@ -201,7 +233,7 @@ export const chatApi = {
     })
   },
 
-  listMessages(sessionId: string, params: ListChatSessionsParams = {}) {
+  listMessages(sessionId: string, params: ListChatMessagesParams = {}) {
     return request<PageResponse<ChatMessage>>({
       method: 'GET',
       url: `/api/chat/sessions/${sessionId}/messages`,

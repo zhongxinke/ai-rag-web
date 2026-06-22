@@ -93,7 +93,7 @@ const activeMain = computed(() => {
     <div class="app-sidebar__footer">
       <div class="app-sidebar__footer-title">
         <Activity :size="14" />
-        <span>阶段 7</span>
+        <span>阶段 8</span>
       </div>
       <div class="app-sidebar__footer-text">当前开放知识库、文档、切片、检索调试、会话问答和流式输出。</div>
     </div>
