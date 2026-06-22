@@ -1,0 +1,266 @@
+import { request } from '@/api/client'
+import type {
+  ApiResponse,
+  ChatMessage,
+  ChatRequest,
+  ChatResponse,
+  ChatSession,
+  ChatStreamEvent,
+  CreateChatSessionRequest,
+  ListChatSessionsParams,
+  PageResponse,
+} from '@/api/types'
+import { ApiClientError } from '@/utils/error'
+
+type ChatStreamOptions = {
+  signal?: AbortSignal
+  onEvent: (event: ChatStreamEvent) => void
+}
+
+type RawSseEvent = {
+  event: string
+  data: string
+}
+
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || ''
+
+function apiUrl(path: string) {
+  if (!apiBaseUrl) {
+    return path
+  }
+
+  return `${apiBaseUrl.replace(/\/$/, '')}${path}`
+}
+
+function isApiResponse(value: unknown): value is ApiResponse<unknown> {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'success' in value &&
+      'code' in value &&
+      'message' in value &&
+      'timestamp' in value,
+  )
+}
+
+function toStreamEvent(raw: RawSseEvent): ChatStreamEvent | null {
+  const parsed = raw.data ? (JSON.parse(raw.data) as Record<string, unknown>) : {}
+
+  if (raw.event === 'metadata') {
+    return {
+      type: 'metadata',
+      sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : undefined,
+      messageId: typeof parsed.messageId === 'string' ? parsed.messageId : undefined,
+    }
+  }
+
+  if (raw.event === 'delta') {
+    return {
+      type: 'delta',
+      content: typeof parsed.content === 'string' ? parsed.content : '',
+    }
+  }
+
+  if (raw.event === 'references') {
+    return {
+      type: 'references',
+      references: Array.isArray(parsed.references) ? (parsed.references as ChatResponse['references']) : [],
+    }
+  }
+
+  if (raw.event === 'done') {
+    return {
+      type: 'done',
+      finishReason: typeof parsed.finishReason === 'string' ? parsed.finishReason : undefined,
+    }
+  }
+
+  if (raw.event === 'error') {
+    return {
+      type: 'error',
+      message: typeof parsed.message === 'string' ? parsed.message : 'Streaming chat failed',
+    }
+  }
+
+  return null
+}
+
+function parseSseBlock(block: string): RawSseEvent | null {
+  let event = 'message'
+  const dataLines: string[] = []
+
+  for (const line of block.split(/\r?\n/)) {
+    if (!line || line.startsWith(':')) {
+      continue
+    }
+
+    const separatorIndex = line.indexOf(':')
+    const field = separatorIndex === -1 ? line : line.slice(0, separatorIndex)
+    const rawValue = separatorIndex === -1 ? '' : line.slice(separatorIndex + 1)
+    const value = rawValue.startsWith(' ') ? rawValue.slice(1) : rawValue
+
+    if (field === 'event') {
+      event = value
+    }
+    if (field === 'data') {
+      dataLines.push(value)
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return null
+  }
+
+  return {
+    event,
+    data: dataLines.join('\n'),
+  }
+}
+
+function dispatchSseBlocks(buffer: string, onEvent: (event: ChatStreamEvent) => void) {
+  const parts = buffer.split(/\r?\n\r?\n/)
+  const remainder = parts.pop() ?? ''
+
+  for (const part of parts) {
+    const raw = parseSseBlock(part)
+    if (!raw) {
+      continue
+    }
+
+    const event = toStreamEvent(raw)
+    if (event) {
+      onEvent(event)
+    }
+  }
+
+  return remainder
+}
+
+async function throwStreamError(response: Response) {
+  const text = await response.text()
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (isApiResponse(parsed)) {
+      throw new ApiClientError({
+        code: parsed.code || `HTTP_${response.status}`,
+        message: parsed.message,
+        status: response.status,
+        timestamp: parsed.timestamp,
+        raw: parsed,
+      })
+    }
+  } catch (error) {
+    if (error instanceof ApiClientError) {
+      throw error
+    }
+  }
+
+  throw new ApiClientError({
+    code: `HTTP_${response.status}`,
+    message: text || response.statusText || 'Streaming chat request failed',
+    status: response.status,
+    raw: text,
+  })
+}
+
+export const chatApi = {
+  ask(data: ChatRequest) {
+    return request<ChatResponse>({
+      method: 'POST',
+      url: '/api/chat',
+      data,
+      timeout: 120000,
+    })
+  },
+
+  createSession(data: CreateChatSessionRequest) {
+    return request<ChatSession>({
+      method: 'POST',
+      url: '/api/chat/sessions',
+      data,
+    })
+  },
+
+  listSessions(params: ListChatSessionsParams = {}) {
+    return request<PageResponse<ChatSession>>({
+      method: 'GET',
+      url: '/api/chat/sessions',
+      params: {
+        page: params.page ?? 0,
+        size: params.size ?? 20,
+        sort: params.sort ?? 'updatedAt,desc',
+        knowledgeBaseId: params.knowledgeBaseId || undefined,
+      },
+    })
+  },
+
+  getSession(id: string) {
+    return request<ChatSession>({
+      method: 'GET',
+      url: `/api/chat/sessions/${id}`,
+    })
+  },
+
+  listMessages(sessionId: string, params: ListChatSessionsParams = {}) {
+    return request<PageResponse<ChatMessage>>({
+      method: 'GET',
+      url: `/api/chat/sessions/${sessionId}/messages`,
+      params: {
+        page: params.page ?? 0,
+        size: params.size ?? 100,
+        sort: params.sort ?? 'createdAt,asc',
+      },
+    })
+  },
+
+  async stream(data: ChatRequest, options: ChatStreamOptions) {
+    const response = await fetch(apiUrl('/api/chat/stream'), {
+      method: 'POST',
+      headers: {
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+      signal: options.signal,
+    })
+
+    if (!response.ok) {
+      await throwStreamError(response)
+    }
+
+    if (!response.body) {
+      throw new ApiClientError({
+        code: 'STREAM_NOT_SUPPORTED',
+        message: 'Current browser does not support readable streams',
+        status: response.status,
+      })
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        buffer = dispatchSseBlocks(buffer, options.onEvent)
+      }
+
+      buffer += decoder.decode()
+      if (buffer.trim()) {
+        const raw = parseSseBlock(buffer)
+        const event = raw ? toStreamEvent(raw) : null
+        if (event) {
+          options.onEvent(event)
+        }
+      }
+    } finally {
+      reader.releaseLock()
+    }
+  },
+}
