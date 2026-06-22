@@ -44,6 +44,12 @@ export const router = createRouter({
           meta: { title: '会话问答' },
         },
         {
+          path: 'monitoring',
+          name: 'monitoring',
+          component: () => import('@/features/monitoring/MonitoringView.vue'),
+          meta: { title: '运行监控' },
+        },
+        {
           path: 'knowledge-bases/:id/retrieval',
           name: 'knowledge-base-retrieval',
           component: () => import('@/features/retrieval/RetrievalDebugView.vue'),

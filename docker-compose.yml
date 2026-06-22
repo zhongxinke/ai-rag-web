@@ -1,0 +1,7 @@
+services:
+  ai-rag-web:
+    build: .
+    ports:
+      - "5173:80"
+    environment:
+      API_PROXY_TARGET: http://host.docker.internal:8080

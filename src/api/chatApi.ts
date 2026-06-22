@@ -12,6 +12,7 @@ import type {
   ListChatSessionsParams,
   PageResponse,
 } from '@/api/types'
+import { API_KEY_HEADER, getApiKeyHeader } from '@/utils/auth'
 import { ApiClientError } from '@/utils/error'
 
 type ChatStreamOptions = {
@@ -188,7 +189,7 @@ async function throwStreamError(response: Response) {
   }
 
   throw new ApiClientError({
-    code: `HTTP_${response.status}`,
+    code: response.status === 401 ? 'AUTH_REQUIRED' : response.status === 403 ? 'FORBIDDEN' : `HTTP_${response.status}`,
     message: text || response.statusText || 'Streaming chat request failed',
     status: response.status,
     raw: text,
@@ -246,12 +247,19 @@ export const chatApi = {
   },
 
   async stream(data: ChatRequest, options: ChatStreamOptions) {
+    const apiKey = getApiKeyHeader()
+    const headers: Record<string, string> = {
+      Accept: 'text/event-stream',
+      'Content-Type': 'application/json',
+    }
+
+    if (apiKey) {
+      headers[API_KEY_HEADER] = apiKey
+    }
+
     const response = await fetch(apiUrl('/api/chat/stream'), {
       method: 'POST',
-      headers: {
-        Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(data),
       signal: options.signal,
     })

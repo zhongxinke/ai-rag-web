@@ -15,6 +15,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   DOCUMENT_INDEXING_FAILED: '文档向量索引失败。',
   DOCUMENT_INDEXING_IN_PROGRESS: '文档正在向量化，请稍后再试。',
   RETRIEVAL_FAILED: '检索失败，请稍后重试。',
+  AUTH_REQUIRED: '需要认证，请配置访问令牌后重试。',
+  UNAUTHORIZED: '需要认证，请配置访问令牌后重试。',
+  FORBIDDEN: '当前账号无权限执行该操作。',
+  ACCESS_DENIED: '当前账号无权限执行该操作。',
   INTERNAL_ERROR: '服务异常，请稍后重试。',
   NETWORK_ERROR: '无法连接后端服务，请确认服务已启动。',
 }

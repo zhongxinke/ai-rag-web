@@ -35,6 +35,9 @@ const activeMain = computed(() => {
   if (route.path.startsWith('/chat') || route.path.includes('/chat')) {
     return 'chat'
   }
+  if (route.path.startsWith('/monitoring')) {
+    return 'monitoring'
+  }
   if (route.path.includes('retrieval')) {
     return 'retrieval'
   }
@@ -83,19 +86,23 @@ const activeMain = computed(() => {
         <MessageSquare :size="18" />
         <span>RAG 问答</span>
       </RouterLink>
-      <div class="app-sidebar__link disabled" aria-disabled="true">
+      <RouterLink
+        class="app-sidebar__link"
+        :class="{ active: activeMain === 'monitoring' }"
+        to="/monitoring"
+        @click="appStore.closeSidebar"
+      >
         <Files :size="18" />
         <span>运行监控</span>
-        <small>待开放</small>
-      </div>
+      </RouterLink>
     </nav>
 
     <div class="app-sidebar__footer">
       <div class="app-sidebar__footer-title">
         <Activity :size="14" />
-        <span>阶段 8</span>
+        <span>阶段 9</span>
       </div>
-      <div class="app-sidebar__footer-text">当前开放知识库、文档、切片、检索调试、会话问答和流式输出。</div>
+      <div class="app-sidebar__footer-text">当前开放知识库、文档、检索、问答、监控和生产部署配置。</div>
     </div>
   </aside>
 </template>

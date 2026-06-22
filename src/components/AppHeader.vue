@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Menu, Server } from 'lucide-vue-next'
+import { KeyRound, Menu, Server } from 'lucide-vue-next'
 
 import { useAppStore } from '@/stores/appStore'
 
 const route = useRoute()
 const appStore = useAppStore()
+const emit = defineEmits<{
+  (event: 'open-auth-token-dialog'): void
+}>()
 
 const title = computed(() => route.meta.title?.toString() || 'AI RAG Web')
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '同源 / Vite 代理'
@@ -25,6 +28,16 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '同源 / Vite 代理'
       <Server :size="15" />
       <span>{{ apiBaseUrl }}</span>
     </div>
+    <button
+      class="app-header__auth"
+      :class="{ 'app-header__auth--active': appStore.hasAuthToken }"
+      type="button"
+      aria-label="配置访问令牌"
+      @click="emit('open-auth-token-dialog')"
+    >
+      <KeyRound :size="15" />
+      <span>{{ appStore.hasAuthToken ? '已配置令牌' : '访问令牌' }}</span>
+    </button>
   </header>
 </template>
 
@@ -103,6 +116,32 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '同源 / Vite 代理'
   white-space: nowrap;
 }
 
+.app-header__auth {
+  display: inline-flex;
+  min-height: 34px;
+  cursor: pointer;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 10px;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.app-header__auth:hover,
+.app-header__auth--active {
+  border-color: #bbf7d0;
+  background: var(--app-success-soft);
+  color: var(--app-success);
+}
+
 @media (max-width: 900px) {
   .app-header {
     padding: 0 16px;
@@ -115,6 +154,10 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '同源 / Vite 代理'
 
 @media (max-width: 620px) {
   .app-header__endpoint {
+    display: none;
+  }
+
+  .app-header__auth span {
     display: none;
   }
 }

@@ -15,8 +15,10 @@ RAG 系统 Web 管理端，基于 Vue 3、TypeScript、Vite 和 Element Plus 实
 - 执行非流式 RAG 问答并查看引用来源、跳转 chunk 和 token usage。
 - 创建和切换问答会话，查看会话消息历史。
 - 通过 SSE 流式生成回答，支持中断和流式错误展示。
+- 配置访问令牌，统一注入认证请求头并展示无权限状态。
+- 查看后端 Actuator 健康状态、运行信息和基础指标。
 - 统一处理后端 `ApiResponse`、`PageResponse` 和业务错误码。
-- 基础单元测试、类型检查和生产构建。
+- 基础单元测试、类型检查、生产构建和 Docker/Nginx 部署配置。
 
 ## 本地开发
 
@@ -59,9 +61,32 @@ http://localhost:8080
 ```text
 VITE_API_BASE_URL=
 API_PROXY_TARGET=http://localhost:8080
+VITE_API_TOKEN=
 ```
 
 `VITE_API_BASE_URL` 只用于配置后端 origin，例如 `http://example.com`，不要填写 `/api`，否则会和接口路径里的 `/api` 重复。
+
+`VITE_API_TOKEN` 可在构建时注入默认访问令牌；也可以在页面右上角“访问令牌”按钮中保存 API Key，前端会自动携带 `X-API-Key: ...`。
+
+## 生产部署
+
+构建静态资源：
+
+```bash
+npm run build
+```
+
+使用 Docker/Nginx 部署：
+
+```bash
+docker compose up --build
+```
+
+容器默认监听 `http://localhost:5173`，并把 `/api`、`/actuator` 代理到 `API_PROXY_TARGET`：
+
+```bash
+API_PROXY_TARGET=http://host.docker.internal:8080 docker compose up --build
+```
 
 ## 常用命令
 

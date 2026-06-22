@@ -219,3 +219,35 @@ export type ChatStreamEvent =
       type: 'error'
       message: string
     }
+
+export interface ActuatorHealthComponent {
+  status?: string
+  details?: Record<string, unknown>
+  components?: Record<string, ActuatorHealthComponent>
+}
+
+export interface ActuatorHealth extends ActuatorHealthComponent {
+  status: string
+}
+
+export interface ActuatorMetricsIndex {
+  names: string[]
+}
+
+export interface ActuatorMetricMeasurement {
+  statistic: string
+  value: number
+}
+
+export interface ActuatorMetricTag {
+  tag: string
+  values: string[]
+}
+
+export interface ActuatorMetric {
+  name: string
+  description?: string
+  baseUnit?: string
+  measurements: ActuatorMetricMeasurement[]
+  availableTags: ActuatorMetricTag[]
+}

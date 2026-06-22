@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+
+import AppAuthTokenDialog from '@/components/AppAuthTokenDialog.vue'
 import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import { useAppStore } from '@/stores/appStore'
 
 const appStore = useAppStore()
+const authTokenDialogVisible = ref(false)
 </script>
 
 <template>
@@ -12,12 +16,13 @@ const appStore = useAppStore()
     <AppSidebar />
     <button class="app-layout__scrim" type="button" aria-label="关闭导航" @click="appStore.closeSidebar" />
     <div class="app-layout__workspace">
-      <AppHeader />
+      <AppHeader @open-auth-token-dialog="authTokenDialogVisible = true" />
       <main id="main-content" class="app-layout__main" tabindex="-1">
         <RouterView />
       </main>
     </div>
   </div>
+  <AppAuthTokenDialog v-model="authTokenDialogVisible" />
 </template>
 
 <style scoped>
